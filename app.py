@@ -1,5 +1,6 @@
 import streamlit as st
-from pymongo import MongoClient
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from dotenv import load_dotenv
 import os
@@ -7,16 +8,24 @@ import os
 # Carregar variáveis de ambiente do arquivo .env
 load_dotenv()
 
-# Conectando ao MongoDB
-MONGO_URI = os.getenv("MONGO_URI")
-client = MongoClient(MONGO_URI)
-db = client["daily_db"]
-email_collection = db["emails"]
-response_collection = db["responses"]
+# Conectando ao PostgreSQL
+DB_HOST = os.getenv("DB_HOST")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+
+conn = psycopg2.connect(
+    host=DB_HOST,
+    dbname=DB_NAME,
+    user=DB_USER,
+    password=DB_PASSWORD
+)
+cursor = conn.cursor(cursor_factory=RealDictCursor)
 
 # Função para validar o e-mail
 def email_existe(email):
-    return email_collection.find_one({"email": email}) is not None
+    cursor.execute("SELECT 1 FROM emails WHERE email = %s", (email,))
+    return cursor.fetchone() is not None
 
 # Página inicial do formulário
 def pagina_inicial():
@@ -46,15 +55,24 @@ def formulario_daily():
     if st.button("Enviar"):
         response = {
             "email": st.session_state.email,
-            "data": data.isoformat(),
+            "data": data,
             "tarefa_realizada": tarefa_realizada,
             "progresso": progresso,
             "descricao_obstaculos": descricao_obstaculos,
             "proximas_etapas": proximas_etapas,
             "comentarios_adicionais": comentarios_adicionais
         }
-        response_collection.insert_one(response)
+        cursor.execute("""
+            INSERT INTO responses (email, data, tarefa_realizada, progresso, descricao_obstaculos, proximas_etapas, comentarios_adicionais)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (response['email'], response['data'], response['tarefa_realizada'], response['progresso'], response['descricao_obstaculos'], response['proximas_etapas'], response['comentarios_adicionais']))
+        conn.commit()
         st.success("Formulário enviado com sucesso!")
+
+        # Redefinir o estado e redirecionar para a tela de e-mail
+        st.session_state.email_validado = False
+        st.session_state.email = None
+        st.experimental_rerun()
 
 # Controlando a navegação entre as páginas
 if "email_validado" not in st.session_state:
